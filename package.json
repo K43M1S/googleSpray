@@ -1,0 +1,20 @@
+{
+  "name": "googleSpray",
+  "version": "1.0.0",
+  "description": "Browser-based Google Workspace Authentication Assessment Tool",
+  "type": "commonjs",
+  "bin": {
+    "googleSpray": "./googleSpray.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "commander": "^11.0.0",
+    "log-timestamp": "^0.3.0",
+    "puppeteer-real-browser": "^1.0.0",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "sleep-promise": "^9.1.0"
+  }
+}
