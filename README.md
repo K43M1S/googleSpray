@@ -43,7 +43,7 @@ and correlation.
 Clone the repository and install dependencies:
 
 ```bash
-git clone https://github.com/<your-username>/googleSpray.git
+git clone https://github.com/RipFran/googleSpray.git
 cd googleSpray
 npm install
 ```
